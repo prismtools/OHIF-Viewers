@@ -45,6 +45,14 @@ const defaultProtocol = {
             greaterThan: { value: 0 },
           },
         },
+        {
+          weight: 10,
+          attribute: 'SeriesInstanceUID',
+          constraint: {
+            equals:
+              '1.3.6.1.4.1.5962.99.1.2968617883.1314880426.1493322302363.268.0',
+          },
+        },
       ],
       // Can be used to select matching studies
       // studyMatchingRules: [],

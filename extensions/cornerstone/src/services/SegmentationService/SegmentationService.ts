@@ -9,10 +9,6 @@ import {
   getEnabledElementByIds,
   metaData,
   Types as csTypes,
-  eventTarget,
-  getEnabledElementByIds,
-  metaData,
-  Types,
   utilities as csUtils,
   volumeLoader,
 } from '@cornerstonejs/core';
@@ -24,15 +20,6 @@ import {
   utilities as cstUtils,
 } from '@cornerstonejs/tools';
 import { pubSubServiceInterface } from '@ohif/core';
-import {
-  CONSTANTS as cstConstants,
-  Enums as csToolsEnums,
-  segmentation as cstSegmentation,
-  Types as cstTypes,
-  utilities as cstUtils,
-} from '@cornerstonejs/tools';
-import { pubSubServiceInterface } from '@ohif/core';
-import isEqual from 'lodash.isequal';
 import { easeInOutBell } from '../../utils/transitions';
 import { Segmentation, SegmentationConfig } from './SegmentationServiceTypes';
 
@@ -824,6 +811,7 @@ class SegmentationService {
             frameOfReferenceUID: structureSet.frameOfReferenceUID,
             id: rtStructData[index].id,
             color: rtStructData[index].color,
+            segmentIndex: index,
           },
           type: csEnums.GeometryType.CONTOUR,
         }
@@ -1312,10 +1300,16 @@ class SegmentationService {
     //   toolGroupId
     // );
 
+    const segmentationRepresentations = this.getSegmentationRepresentationsForToolGroup(
+      toolGroupId
+    );
+
+    const typeToUse = segmentationRepresentations?.[0]?.type || LABELMAP;
+
     const config = cstSegmentation.config.getGlobalConfig();
     const { renderInactiveSegmentations } = config;
 
-    const labelmapRepresentationConfig = config.representations.LABELMAP;
+    const representation = config.representations[typeToUse];
 
     const {
       renderOutline,
@@ -1325,7 +1319,7 @@ class SegmentationService {
       fillAlphaInactive,
       outlineOpacity,
       outlineOpacityInactive,
-    } = labelmapRepresentationConfig;
+    } = representation;
 
     return {
       brushSize,
@@ -1354,46 +1348,31 @@ class SegmentationService {
       renderOutline,
     } = configuration;
 
-    if (renderOutline !== undefined) {
-      this._setLabelmapConfigValue('renderOutline', renderOutline);
-    }
+    const setConfigValueIfDefined = (key, value, transformFn = null) => {
+      if (value !== undefined) {
+        const transformedValue = transformFn ? transformFn(value) : value;
+        this._setSegmentationConfig(key, transformedValue);
+      }
+    };
 
-    if (outlineWidthActive !== undefined) {
-      this._setLabelmapConfigValue('outlineWidthActive', outlineWidthActive);
-      // this._setLabelmapConfigValue('outlineWidthInactive', outlineWidthActive);
-    }
-
-    if (outlineOpacity !== undefined) {
-      this._setLabelmapConfigValue('outlineOpacity', outlineOpacity / 100);
-    }
-
-    if (fillAlpha !== undefined) {
-      this._setLabelmapConfigValue('fillAlpha', fillAlpha / 100);
-    }
-
-    if (renderFill !== undefined) {
-      this._setLabelmapConfigValue('renderFill', renderFill);
-    }
+    setConfigValueIfDefined('renderOutline', renderOutline);
+    setConfigValueIfDefined('outlineWidthActive', outlineWidthActive);
+    setConfigValueIfDefined('outlineOpacity', outlineOpacity, v => v / 100);
+    setConfigValueIfDefined('fillAlpha', fillAlpha, v => v / 100);
+    setConfigValueIfDefined('renderFill', renderFill);
+    setConfigValueIfDefined(
+      'fillAlphaInactive',
+      fillAlphaInactive,
+      v => v / 100
+    );
+    setConfigValueIfDefined('outlineOpacityInactive', fillAlphaInactive, v =>
+      Math.max(0.75, v / 100)
+    );
 
     if (renderInactiveSegmentations !== undefined) {
       const config = cstSegmentation.config.getGlobalConfig();
-
       config.renderInactiveSegmentations = renderInactiveSegmentations;
       cstSegmentation.config.setGlobalConfig(config);
-    }
-
-    if (fillAlphaInactive !== undefined) {
-      this._setLabelmapConfigValue(
-        'fillAlphaInactive',
-        fillAlphaInactive / 100
-      );
-
-      // we assume that if the user changes the inactive fill alpha, they
-      // want the inactive outline to be also changed
-      this._setLabelmapConfigValue(
-        'outlineOpacityInactive',
-        Math.max(0.75, fillAlphaInactive / 100) // don't go below 0.7 for outline
-      );
     }
 
     // if (brushSize !== undefined) {
@@ -1893,12 +1872,16 @@ class SegmentationService {
     return representation;
   }
 
-  private _setLabelmapConfigValue = (property, value) => {
+  private _setSegmentationConfig = (property, value) => {
+    // Todo: currently we only support global config, and we get the type
+    // from the first segmentation
+    const typeToUse = this.getSegmentations()[0].type;
+
     const { cornerstoneViewportService } = this.servicesManager.services;
 
     const config = cstSegmentation.config.getGlobalConfig();
 
-    config.representations.LABELMAP[property] = value;
+    config.representations[typeToUse][property] = value;
 
     // Todo: add non global (representation specific config as well)
     cstSegmentation.config.setGlobalConfig(config);
