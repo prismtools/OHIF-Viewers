@@ -163,7 +163,7 @@ function OHIFCornerstoneSEGViewport(props) {
 
   useEffect(() => {
     const { unsubscribe } = segmentationService.subscribe(
-      segmentationService.EVENTS.SEGMENTATION_PIXEL_DATA_CREATED,
+      segmentationService.EVENTS.SEGMENTATION_LOADING_COMPLETE,
       evt => {
         if (
           evt.segDisplaySet.displaySetInstanceUID ===
@@ -190,7 +190,7 @@ function OHIFCornerstoneSEGViewport(props) {
 
   useEffect(() => {
     const { unsubscribe } = segmentationService.subscribe(
-      segmentationService.EVENTS.SEGMENT_PIXEL_DATA_CREATED,
+      segmentationService.EVENTS.SEGMENT_LOADING_COMPLETE,
       ({ segmentIndex, numSegments }) => {
         setProcessingProgress({
           segmentIndex,
@@ -235,6 +235,8 @@ function OHIFCornerstoneSEGViewport(props) {
       return;
     }
 
+    // This creates a custom tool group which has the lifetime of this view
+    // only, and does NOT interfere with currently displayed segmentations.
     toolGroup = createSEGToolGroupAndAddTools(
       toolGroupService,
       toolGroupId,
@@ -249,6 +251,7 @@ function OHIFCornerstoneSEGViewport(props) {
         toolGroupId
       );
 
+      // Only destroy the viewport specific implementation
       toolGroupService.destroyToolGroup(toolGroupId);
     };
   }, []);
@@ -298,14 +301,12 @@ function OHIFCornerstoneSEGViewport(props) {
     StudyDate,
     SeriesDescription,
     SpacingBetweenSlices,
-    SeriesNumber,
   } = referencedDisplaySetRef.current.metadata;
 
   const onStatusClick = async () => {
     const isHydrated = await hydrateSEGDisplaySet({
       segDisplaySet,
       viewportIndex,
-      toolGroupId,
       servicesManager,
     });
 

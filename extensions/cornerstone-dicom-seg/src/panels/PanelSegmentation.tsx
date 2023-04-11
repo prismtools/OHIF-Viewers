@@ -4,7 +4,6 @@ import { SegmentationGroupTable } from '@ohif/ui';
 import callInputDialog from './callInputDialog';
 
 import { useTranslation } from 'react-i18next';
-import callColorPickerDialog from './callColorPickerDialog';
 
 export default function PanelSegmentation({
   servicesManager,
@@ -63,6 +62,9 @@ export default function PanelSegmentation({
       const { unsubscribe } = segmentationService.subscribe(evt, () => {
         const segmentations = segmentationService.getSegmentations();
         setSegmentations(segmentations);
+        setInitialSegmentationConfigurations(
+          segmentationService.getConfiguration()
+        );
       });
       subscriptions.push(unsubscribe);
     });
@@ -204,7 +206,7 @@ export default function PanelSegmentation({
           showAddSegmentation={false}
           segmentations={segmentations}
           isMinimized={isMinimized}
-          activeSegmentationId={selectedSegmentationId}
+          activeSegmentationId={selectedSegmentationId || ''}
           onSegmentationClick={onSegmentationClick}
           onSegmentationDelete={onSegmentationDelete}
           onSegmentationEdit={onSegmentationEdit}
