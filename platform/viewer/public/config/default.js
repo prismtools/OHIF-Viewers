@@ -8,7 +8,7 @@ window.config = {
   omitQuotationForMultipartRequest: true,
   showWarningMessageForCrossOrigin: true,
   showCPUFallbackMessage: true,
-  showLoadingIndicator: true,
+  showLoadingIndicator: false,
   strictZSpacingForVolumeViewport: true,
   maxNumRequests: {
     interaction: 100,
