@@ -8,7 +8,6 @@ import {
   geometryLoader,
   getEnabledElementByIds,
   metaData,
-  Types as csTypes,
   utilities as csUtils,
   volumeLoader,
 } from '@cornerstonejs/core';
@@ -19,13 +18,14 @@ import {
   Types as cstTypes,
   utilities as cstUtils,
 } from '@cornerstonejs/tools';
-import { pubSubServiceInterface } from '@ohif/core';
+import { pubSubServiceInterface, Types as ohifTypes } from '@ohif/core';
 import { easeInOutBell, reverseEaseInOutBell } from '../../utils/transitions';
 import {
   Segment,
   Segmentation,
   SegmentationConfig,
 } from './SegmentationServiceTypes';
+import { mapROIContoursToRTStructData } from './RTSTRUCT/mapROIContoursToRTStructData';
 
 const { COLOR_LUT } = cstConstants;
 const LABELMAP = csToolsEnums.SegmentationRepresentations.Labelmap;
@@ -50,6 +50,12 @@ const EVENTS = {
 };
 
 const VALUE_TYPES = {};
+
+const SEGMENT_CONSTANT = {
+  opacity: 255,
+  isVisible: true,
+  isLocked: false,
+};
 
 class SegmentationService {
   listeners = {};
@@ -109,7 +115,7 @@ class SegmentationService {
     toolGroupId?: string,
     properties?: {
       label?: string;
-      color?: csTypes.Point3;
+      color?: ohifTypes.RGB;
       opacity?: number;
       visibility?: boolean;
       isLocked?: boolean;
@@ -236,7 +242,8 @@ class SegmentationService {
     // Todo: handle other segmentations other than labelmap
     const labelmapVolume = this.getLabelmapVolume(segmentationId);
 
-    const { scalarData, dimensions } = labelmapVolume;
+    const { dimensions } = labelmapVolume;
+    const scalarData = labelmapVolume.getScalarData();
 
     // Set all values of this segment to zero and get which frames have been edited.
     const frameLength = dimensions[0] * dimensions[1];
@@ -321,7 +328,7 @@ class SegmentationService {
   public setSegmentColor(
     segmentationId: string,
     segmentIndex: number,
-    color: csTypes.Point3,
+    color: ohifTypes.RGB,
     toolGroupId?: string
   ): void {
     this._setSegmentColor(segmentationId, segmentIndex, color, toolGroupId);
@@ -483,10 +490,7 @@ class SegmentationService {
 
     this.segmentations[segmentationId] = {
       ...segmentation,
-      label:
-        segmentation.label !== undefined || segmentation.label !== ''
-          ? segmentation.label
-          : 'Segmentation',
+      label: segmentation.label || '',
       segments: segmentation.segments || [null],
       activeSegmentIndex: segmentation.activeSegmentIndex ?? null,
       segmentCount: segmentation.segmentCount ?? 0,
@@ -579,7 +583,7 @@ class SegmentationService {
       }
     );
     const [rows, columns] = derivedVolume.dimensions;
-    const derivedVolumeScalarData = derivedVolume.scalarData;
+    const derivedVolumeScalarData = derivedVolume.getScalarData();
 
     const { imageIds } = referencedVolume;
     const sopUIDImageIdIndexMap = imageIds.reduce((acc, imageId, index) => {
@@ -671,14 +675,23 @@ class SegmentationService {
               image: [x, y, z],
               world: centerWorld,
             },
-            modifiedTime: Date.now(),
+            modifiedTime: segDisplaySet.SeriesDate,
           },
         },
       };
 
+      const numInitialized = Object.keys(
+        segmentation.cachedStats.segmentCenter
+      );
+
+      // Calculate percentage completed
+      const percentComplete = Math.round(
+        (numInitialized.length / numSegments) * 100
+      );
+
       this._broadcastEvent(EVENTS.SEGMENT_LOADING_COMPLETE, {
-        segmentIndex: Number(segmentIndex),
-        numSegments,
+        percentComplete,
+        numSegments: numSegments,
       });
     };
 
@@ -750,28 +763,9 @@ class SegmentationService {
     const defaultScheme = this._getDefaultSegmentationScheme();
     const rtDisplaySetUID = rtDisplaySet.displaySetInstanceUID;
 
-    const allRTStructData = structureSet.ROIContours.map(
-      ({ contourPoints, ROINumber, ROIName, colorArray }) => {
-        const data = contourPoints.map(({ points, ...rest }) => {
-          const newPoints = points.map(({ x, y, z }) => {
-            return [x, y, z];
-          });
-
-          return {
-            ...rest,
-            points: newPoints,
-          };
-        });
-
-        return {
-          data,
-          id: ROIName || ROINumber,
-          segmentIndex: ROINumber,
-          color: colorArray,
-          geometryId: `${rtDisplaySetUID}:${ROIName ||
-            ROINumber}:segmentIndex-${ROINumber}`,
-        };
-      }
+    const allRTStructData = mapROIContoursToRTStructData(
+      structureSet,
+      rtDisplaySetUID
     );
 
     // sort by segmentIndex
@@ -808,7 +802,6 @@ class SegmentationService {
         'The structureSet does not contain any ROIContours. Please ensure the structureSet is loaded first.'
       );
     }
-    let count = 0;
     const segmentsCachedStats = {};
     const initializeContour = async rtStructData => {
       const { data, id, color, segmentIndex, geometryId } = rtStructData;
@@ -828,25 +821,32 @@ class SegmentationService {
 
       segmentsCachedStats[segmentIndex] = {
         center: { world: centroid },
-        modifiedTime: Date.now(),
+        modifiedTime: rtDisplaySet.SeriesDate, // we use the SeriesDate as the modifiedTime since this is the first time we are creating the segmentation
       };
 
       segmentation.segments[segmentIndex] = {
         label: id,
         segmentIndex,
         color,
-        opacity: 255,
-        isVisible: true,
-        isLocked: false,
+        ...SEGMENT_CONSTANT,
       };
 
+      const numInitialized = Object.keys(segmentsCachedStats).length;
+
+      // Calculate percentage completed
+      const percentComplete = Math.round(
+        (numInitialized / allRTStructData.length) * 100
+      );
+
       this._broadcastEvent(EVENTS.SEGMENT_LOADING_COMPLETE, {
-        segmentIndex: count++,
+        percentComplete,
         // Note: this is not the geometryIds length since there might be
         // some missing ROINumbers
         numSegments: allRTStructData.length,
       });
     };
+
+    const promiseArray = [];
 
     for (let i = 0; i < allRTStructData.length; i++) {
       const promise = new Promise<void>((resolve, reject) => {
@@ -857,8 +857,10 @@ class SegmentationService {
         }, 0);
       });
 
-      await promise;
+      promiseArray.push(promise);
     }
+
+    await Promise.all(promiseArray);
 
     segmentation.segmentCount = allRTStructData.length;
     rtDisplaySet.isLoaded = true;
@@ -1276,7 +1278,6 @@ class SegmentationService {
     const animate = (currentTime: number) => {
       const progress = (currentTime - startTime) / animationLength;
       if (progress >= 1) {
-        // Animation is finished, clear interval
         cstSegmentation.config.setSegmentSpecificConfig(
           toolGroupId,
           segmentationRepresentation.segmentationRepresentationUID,
@@ -1286,7 +1287,6 @@ class SegmentationService {
       }
 
       const reversedProgress = reverseEaseInOutBell(progress, 0.1);
-      console.debug('fillAlpha', reversedProgress);
       cstSegmentation.config.setSegmentSpecificConfig(
         toolGroupId,
         segmentationRepresentation.segmentationRepresentationUID,
@@ -1693,7 +1693,7 @@ class SegmentationService {
   private _setSegmentColor = (
     segmentationId: string,
     segmentIndex: number,
-    color: csTypes.Point3,
+    color: ohifTypes.RGB,
     toolGroupId?: string,
     suppressEvents = false
   ) => {

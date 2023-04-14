@@ -40,6 +40,8 @@ export interface Extension {
   onModeExit?: () => void;
   getHangingProtocolModule?: (p: ExtensionParams) => unknown;
   getCommandsModule?: (p: ExtensionParams) => CommandsModule;
+  getViewportModule?: (p: ExtensionParams) => unknown;
+  getSopClassHandlerModule?: (p: ExtensionParams) => unknown;
 }
 
 export type ExtensionRegister = {
