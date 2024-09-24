@@ -1,0 +1,5 @@
+This recipe assumes that a dcm4chee archive 5 server was already set up per the dcm4chee documentation, 
+e.g. for running dcm4chee securely with Keycloak in Docker containers.
+
+This recipe further assumes that Keycloak may be run separately from dcm4chee, i.e. that instead of 
+starting Keycloak from dcm4chee's docker compose file, keycloak may be running by some other means.

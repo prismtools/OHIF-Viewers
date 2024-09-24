@@ -1,0 +1,164 @@
+# Reference:
+# - https://docs.docker.com/compose/compose-file
+# - https://eclipsesource.com/blogs/2018/01/11/authenticating-reverse-proxy-with-keycloak/
+
+version: '3.5'
+
+services:
+  # Exposed dcm4chee services for DICOMweb(tm)
+  # Derived from dcm4che.org recipe for running secured dcm4chee archive 5 with logging
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.4.2
+    environment:
+      ES_JAVA_OPTS: -Xms1024m -Xmx1024m
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /var/local/dcm4chee-arc/esdatadir:/usr/share/elasticsearch/data
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.4.2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+    depends_on:
+      - elasticsearch
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+  logstash:
+    image: dcm4che/logstash-dcm4chee:8.4.2-15
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+    ports:
+      - "12201:12201/udp"
+      - "8514:8514/udp"
+      - "8514:8514"
+    depends_on:
+      - elasticsearch
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /var/local/dcm4chee-arc/logstash/filter-hashtree:/usr/share/logstash/data/filter-hashtree
+  ldap:
+    image: dcm4che/slapd-dcm4chee:2.6.6-32.0
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://tcia-dcmw-stg-1.ad.uams.edu:12201"
+        tag: slapd
+    ports:
+      - "389:389"
+      - "636:636"
+    env_file: docker-compose.env
+    volumes:
+      - /var/local/dcm4chee-arc/ldap:/var/lib/openldap/openldap-data
+      - /var/local/dcm4chee-arc/slapd.d:/etc/openldap/slapd.d
+  oauth2-proxy:
+    image: dcm4che/oauth2-proxy:7.5.1
+    ports:
+      - "8643:8643"
+    restart: on-failure
+    environment:
+      OAUTH2_PROXY_HTTPS_ADDRESS: 0.0.0.0:8643
+      OAUTH2_PROXY_PROVIDER: keycloak-oidc
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_UPSTREAMS: "http://kibana:5601"
+      OAUTH2_PROXY_OIDC_ISSUER_URL: "https://keycloak-stg.dbmi.cloud/auth/realms/TCIA/"
+      OAUTH2_PROXY_REDIRECT_URL: "https://tcia-dcmw-stg-1.ad.uams.edu:8643/oauth2/callback"
+      OAUTH2_PROXY_ALLOWED_ROLES: auditlog
+      OAUTH2_PROXY_CLIENT_ID: kibana
+      OAUTH2_PROXY_CLIENT_SECRET: InpHc8aOLo4IoeKAIospsZFSi4Y9liMA
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_OIDC_EMAIL_CLAIM: "sub"
+      OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL: "true"
+      OAUTH2_PROXY_COOKIE_SECRET: T0F1dGhLaWJhbmFUZXN0cw==
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "true"
+      OAUTH2_PROXY_TLS_CERT_FILE: /etc/certs/cert.pem
+      OAUTH2_PROXY_TLS_KEY_FILE: /etc/certs/key.pem
+      OAUTH2_PROXY_CUSTOM_TEMPLATES_DIR: /templates
+  db:
+    image: dcm4che/postgres-dcm4chee:14.12-33
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://tcia-dcmw-stg-1.ad.uams.edu:12201"
+        tag: postgres
+    ports:
+      - "5432:5432"
+    env_file: docker-compose.env
+    depends_on:
+      - logstash
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /var/local/dcm4chee-arc/db:/var/lib/postgresql/data
+  arc:
+#    image: dcm4che/dcm4chee-arc-psql:5.32.0-secure
+    image: quay.io/prismtools/dcm4chee-arc-psql:5.32.0-secure-PEP
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://tcia-dcmw-stg-1.ad.uams.edu:12201"
+        tag: dcm4chee-arc
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+      - "9990:9990"
+      - "9993:9993"
+      - "11112:11112"
+      - "2762:2762"
+      - "2575:2575"
+      - "12575:12575"
+    env_file: docker-compose.env
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx1536m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=512m
+      WILDFLY_CHOWN: /opt/wildfly/standalone /storage
+      WILDFLY_WAIT_FOR: ldap:389 db:5432 logstash:8514
+    depends_on:
+      - ldap
+      - db
+      - logstash
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /var/local/dcm4chee-arc/wildfly:/opt/wildfly/standalone
+      - /var/local/dcm4chee-arc/storage:/storage
+  # Exposed server that's handling incoming web requests
+  # Underlying image: openresty/openresty:alpine-fat
+  ohif_viewer:
+    build:
+      # Project root
+      context: ./../../../../
+      # Relative to context
+      dockerfile: ./platform/app/.recipes/OpenResty-dcm4chee-Keycloak/dockerfile
+    image: webapp:latest
+    container_name: webapp
+    depends_on:
+      - arc
+    volumes:
+      # Nginx config
+      - ./config/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      # Logs
+      - ./logs/nginx:/var/logs/nginx
+      # Let's Encrypt
+      # - letsencrypt_certificates:/etc/letsencrypt
+      # - letsencrypt_challenges:/var/www/letsencrypt
+      # SSL Certs
+      - /var/local/ssl-certs:/etc/ssl/server-certs
+    ports:
+      - '443:443' # SSL
+      - '80:80' # Web
+    restart: on-failure
+
