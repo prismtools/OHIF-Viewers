@@ -17,13 +17,10 @@
 #
 # 1. Copy the files needed for the build, and nothing else
 # 2. Building the React application for production
-# 3. Setting up our Nginx (OpenResty*) image w/ step two's output
+# 3. Setting up our Nginx (w/ OAuth2 Proxy) image w/ step two's output
 #
 # (Previous scripts did it in two stages, but that has been causing build errors.  
 # Adding the preliminary copy stage (one) solves the problem)
-#
-# * OpenResty is functionally identical to Nginx with the addition of Lua out of
-# the box.
 
 
 # Stage 1: Copy the application files
@@ -43,16 +40,21 @@ COPY platform /usr/src/app/platform
 #RUN find modes \! -name "package.json" -mindepth 2 -maxdepth 2 -print | x$
 #RUN find platform \! -name "package.json" -mindepth 2 -maxdepth 2 -print $
 
+
 # Stage 2: Build the application
-# Copy Files
+
+# Install dependencies
 FROM node:18.16.1-slim as builder
 RUN apt-get update && apt-get install -y build-essential python3
+
+# Setup the working directory
 RUN mkdir /usr/src/app
 WORKDIR /usr/src/app
 
 COPY --from=json-copier /usr/src/app .
 
 # Run the install before copying the rest of the files
+# Install node dependencies
 RUN yarn config set workspaces-experimental true
 RUN yarn install --frozen-lockfile --verbose
 
@@ -61,51 +63,39 @@ COPY . .
 # To restore workspaces symlinks
 RUN yarn install --frozen-lockfile --verbose
 
-ENV APP_CONFIG=config/docker_openresty-dcm4chee-keycloak.js
+# Set the environment for the build
+ENV APP_CONFIG=config/docker_nginx-dcm4chee-keycloak-UMA.js
 ENV PATH /usr/src/app/node_modules/.bin:$PATH
 ENV QUICK_BUILD true
-# ENV GENERATE_SOURCEMAP=false
-# ENV REACT_APP_CONFIG=config/default.js
 
+# Build the application
 RUN yarn run build
 
-# Stage 3: Bundle the built application into a Docker container
-# which runs openresty (nginx) using Alpine Linux
-# LINK: https://hub.docker.com/r/openresty/openresty
-FROM openresty/openresty:1.21.4.2-0-bullseye-fat
 
-RUN mkdir /var/log/nginx
-RUN apt-get update && \
-  apt-get install -y openssl libssl-dev git gcc wget unzip make && \
-  apt-get clean
+# Stage 3: Setup the NGINX environment with OAuth2 Proxy
+FROM nginx:alpine
 
-RUN apt-get install --assume-yes lua5.4 libzmq3-dev lua5.4-dev
-RUN cd /tmp && \
-  wget http://luarocks.org/releases/luarocks-3.9.2.tar.gz && \
-  tar zxpf luarocks-3.9.2.tar.gz && \
-  cd luarocks-3.9.2 && \
-  ./configure && \
-  make && \
-  make install
+# Install dependencies for oauth2-proxy
+RUN apk add --no-cache curl
 
-# !!!
-RUN luarocks install lua-resty-http
-# RUN luarocks install lua-nginx-module
-RUN luarocks install lua-cjson
-RUN luarocks install lua-resty-string
-RUN luarocks install lua-resty-session
-RUN luarocks install lua-resty-jwt
-RUN luarocks install lua-resty-openidc
+# Create necessary directories
+RUN mkdir -p /var/logs/nginx /var/www/html /etc/oauth2-proxy
 
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+# Download and install oauth2-proxy
+RUN curl -L https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v7.7.1/oauth2-proxy-v7.7.1.linux-amd64.tar.gz -o oauth2-proxy.tar.gz && \
+  tar -xvzf oauth2-proxy.tar.gz && \
+  mv oauth2-proxy-v7.7.1.linux-amd64/oauth2-proxy /usr/local/bin/ && \
+  rm -rf oauth2-proxy-v7.7.1.linux-amd64 oauth2-proxy.tar.gz
 
-#
-RUN luarocks install lua-resty-http
-# !!!
-RUN luarocks install lua-resty-auto-ssl
-
-
-# Copy build output to image
+# Copy the built application
 COPY --from=builder /usr/src/app/platform/app/dist /var/www/html
 
-ENTRYPOINT ["/usr/local/openresty/nginx/sbin/nginx", "-g", "daemon off;"]
+# Copy the entrypoint script
+COPY ./platform/app/.recipes/Nginx-Dcm4chee-Keycloak-UMA/config/entrypoint.sh /entrypoint.sh
+
+# Expose necessary ports
+EXPOSE 80 443 4180
+
+# Set the entrypoint script as the entrypoint
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
