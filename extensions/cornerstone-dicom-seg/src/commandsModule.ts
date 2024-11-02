@@ -48,6 +48,7 @@ const commandsModule = ({
     displaySetService,
     viewportGridService,
     toolGroupService,
+    cornerstoneViewportService,
   } = servicesManager.services;
 
   const actions = {
@@ -210,6 +211,8 @@ const commandsModule = ({
       const referencedDisplaySet = displaySetService.getDisplaySetByUID(
         displaySet.referencedDisplaySetInstanceUID
       );
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const initialSliceIndex = viewport.getSliceIndex();
 
       updateViewportsForSegmentationRendering({
         viewportId,
@@ -229,6 +232,7 @@ const commandsModule = ({
           segmentation.description = `S${referencedDisplaySet.SeriesNumber}: ${referencedDisplaySet.SeriesDescription}`;
           return segmentationId;
         },
+        initialSliceIndex,
       });
     },
     /**
@@ -259,9 +263,12 @@ const commandsModule = ({
       labelmapObj.metadata = [];
 
       const segmentationInOHIF = segmentationService.getSegmentation(segmentationId);
-      labelmapObj.segmentsOnLabelmap.forEach(segmentIndex => {
+      segmentationInOHIF.segments.forEach(segment => {
         // segmentation service already has a color for each segment
-        const segment = segmentationInOHIF?.segments[segmentIndex];
+        if (!segment) {
+          return;
+        }
+        const segmentIndex = segment.segmentIndex;
         const { label, color } = segment;
 
         const RecommendedDisplayCIELabValue = dcmjs.data.Colors.rgb2DICOMLAB(
@@ -271,8 +278,8 @@ const commandsModule = ({
         const segmentMetadata = {
           SegmentNumber: segmentIndex.toString(),
           SegmentLabel: label,
-          SegmentAlgorithmType: 'MANUAL',
-          SegmentAlgorithmName: 'OHIF Brush',
+          SegmentAlgorithmType: segment?.algorithmType || 'MANUAL',
+          SegmentAlgorithmName: segment?.algorithmName || 'OHIF Brush',
           RecommendedDisplayCIELabValue,
           SegmentedPropertyCategoryCodeSequence: {
             CodeValue: 'T-D0050',
@@ -332,7 +339,7 @@ const commandsModule = ({
         extensionManager,
       });
 
-      if (promptResult.action !== 1 && promptResult.value) {
+      if (promptResult.action !== 1 && !promptResult.value) {
         return;
       }
 

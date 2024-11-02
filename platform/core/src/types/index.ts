@@ -7,8 +7,9 @@ import type {
   BaseDataSourceConfigurationAPI,
   BaseDataSourceConfigurationAPIItem,
 } from './DataSourceConfigurationAPI';
-import type { PresentationIds } from '../services/ViewportGridService';
+import type DisplaySet from '../services/DisplaySetService/DisplaySet';
 
+export type * from '../services/ViewportGridService';
 export type * from '../services/CustomizationService/types';
 // Separate out some generic types
 export type * from './Consumer';
@@ -31,5 +32,5 @@ export {
   DataSourceDefinition,
   BaseDataSourceConfigurationAPI,
   BaseDataSourceConfigurationAPIItem,
-  PresentationIds,
+  DisplaySet,
 };

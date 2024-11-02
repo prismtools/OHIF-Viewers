@@ -60,6 +60,7 @@ const MEASUREMENT_SCHEMA_KEYS = [
   'cachedStats',
   'selected',
   'textBox',
+  'referencedImageId',
 ];
 
 const EVENTS = {
@@ -465,7 +466,6 @@ class MeasurementService extends PubSubService {
     }
 
     const sourceInfo = this._getSourceToString(source);
-
     if (!this._sourceHasMappings(source)) {
       throw new Error(`No measurement mappings found for '${sourceInfo}' source. Exiting early.`);
     }

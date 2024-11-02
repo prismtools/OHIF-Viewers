@@ -1,4 +1,4 @@
-import * as utils from './index.js';
+import * as utils from './index';
 
 describe('Top level exports', () => {
   test('should export the modules ', () => {
@@ -22,7 +22,10 @@ describe('Top level exports', () => {
       'imageIdToURI',
       'roundNumber',
       'b64toBlob',
+      'sopClassDictionary',
+      'createStudyBrowserTabs',
       'formatDate',
+      'formatTime',
       'formatPN',
       'generateAcceptHeader',
       'isEqualWithin',
