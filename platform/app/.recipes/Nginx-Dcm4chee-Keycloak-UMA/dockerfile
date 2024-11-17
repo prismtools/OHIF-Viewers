@@ -58,10 +58,13 @@ COPY --from=json-copier /usr/src/app .
 RUN yarn config set workspaces-experimental true
 RUN yarn install --frozen-lockfile --verbose
 
-COPY . .
+#COPY . .
 
 # To restore workspaces symlinks
-RUN yarn install --frozen-lockfile --verbose
+#RUN yarn install --frozen-lockfile --verbose
+
+# Copy the missing images dir to swiper/core
+RUN cp -r /usr/src/app/platform/app/.recipes//Nginx-Dcm4chee-Keycloak-UMA/images /usr/src/app/node_modules/swiper/core/images
 
 # Set the environment for the build
 ENV APP_CONFIG=config/docker_nginx-dcm4chee-keycloak-UMA.js
