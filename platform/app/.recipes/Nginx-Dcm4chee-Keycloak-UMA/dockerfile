@@ -1,0 +1,104 @@
+# docker-compose
+# --------------
+# This dockerfile is used by the `docker-compose.yml` adjacent file. When
+# running `docker-compose build`, this dockerfile helps build the "webapp" image.
+# All paths are relative to the `context`, which is the project root directory.
+#
+# docker build
+# --------------
+# If you would like to use this dockerfile to build and tag an image, make sure
+# you set the context to the project's root directory:
+# https://docs.docker.com/engine/reference/commandline/build/
+#
+#
+# SUMMARY
+# --------------
+# This dockerfile has three stages:
+#
+# 1. Copy the files needed for the build, and nothing else
+# 2. Building the React application for production
+# 3. Setting up our Nginx (w/ OAuth2 Proxy) image w/ step two's output
+#
+# (Previous scripts did it in two stages, but that has been causing build errors.  
+# Adding the preliminary copy stage (one) solves the problem)
+
+
+# Stage 1: Copy the application files
+# docker build -t ohif/viewer:latest .
+FROM node:18.16.1-slim as json-copier
+
+RUN mkdir /usr/src/app
+WORKDIR /usr/src/app
+
+COPY ["package.json", "yarn.lock", "preinstall.js", "./"]
+COPY extensions /usr/src/app/extensions
+COPY modes /usr/src/app/modes
+COPY platform /usr/src/app/platform
+
+# Find and remove non-package.json files
+#RUN find extensions \! -name "package.json" -mindepth 2 -maxdepth 2 -prin$
+#RUN find modes \! -name "package.json" -mindepth 2 -maxdepth 2 -print | x$
+#RUN find platform \! -name "package.json" -mindepth 2 -maxdepth 2 -print $
+
+
+# Stage 2: Build the application
+
+# Install dependencies
+FROM node:18.16.1-slim as builder
+RUN apt-get update && apt-get install -y build-essential python3
+
+# Setup the working directory
+RUN mkdir /usr/src/app
+WORKDIR /usr/src/app
+
+COPY --from=json-copier /usr/src/app .
+
+# Run the install before copying the rest of the files
+# Install node dependencies
+RUN yarn config set workspaces-experimental true
+RUN yarn install --frozen-lockfile --verbose
+
+#COPY . .
+
+# To restore workspaces symlinks
+#RUN yarn install --frozen-lockfile --verbose
+
+# Copy the missing images dir to swiper/core
+RUN cp -r /usr/src/app/platform/app/.recipes//Nginx-Dcm4chee-Keycloak-UMA/images /usr/src/app/node_modules/swiper/core/images
+
+# Set the environment for the build
+ENV APP_CONFIG=config/docker-nginx-dcm4chee-keycloak-UMA.js
+ENV PATH /usr/src/app/node_modules/.bin:$PATH
+ENV QUICK_BUILD true
+
+# Build the application
+RUN yarn run build
+
+
+# Stage 3: Setup the NGINX environment with OAuth2 Proxy
+FROM nginx:alpine
+
+# Install dependencies for oauth2-proxy
+RUN apk add --no-cache curl
+
+# Create necessary directories
+RUN mkdir -p /var/logs/nginx /var/www/html /etc/oauth2-proxy
+
+# Download and install oauth2-proxy
+RUN curl -L https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v7.7.1/oauth2-proxy-v7.7.1.linux-amd64.tar.gz -o oauth2-proxy.tar.gz && \
+  tar -xvzf oauth2-proxy.tar.gz && \
+  mv oauth2-proxy-v7.7.1.linux-amd64/oauth2-proxy /usr/local/bin/ && \
+  rm -rf oauth2-proxy-v7.7.1.linux-amd64 oauth2-proxy.tar.gz
+
+# Copy the built application
+COPY --from=builder /usr/src/app/platform/app/dist /var/www/html
+
+# Copy the entrypoint script
+COPY ./platform/app/.recipes/Nginx-Dcm4chee-Keycloak-UMA/config/entrypoint.sh /entrypoint.sh
+
+# Expose necessary ports
+EXPOSE 80 443 4180
+
+# Set the entrypoint script as the entrypoint
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
